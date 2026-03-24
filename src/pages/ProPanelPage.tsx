@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Camera, Save, Plus, X, MapPin, Briefcase, DollarSign, Clock, FileText, Wrench, User, Wallet, Star, CheckCircle, TrendingUp, MessageSquare, Settings } from "lucide-react";
@@ -16,6 +16,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import NegotiationThread, { Negotiation } from "@/components/NegotiationThread";
 import ProJobCard from "@/components/ProJobCard";
+import { fetchOwnProProfile, PRO_PROFILES_MISSING_MESSAGE, saveOwnProProfile } from "@/lib/proProfiles";
 
 const availabilityOptions = ["Weekdays", "Weekends", "Evenings", "Mornings", "Flexible"];
 
@@ -42,6 +43,7 @@ const ProPanelPage = () => {
   const [workPhotosMap, setWorkPhotosMap] = useState<Record<string, any[]>>({});
   const [jobTab, setJobTab] = useState<"active" | "completed">("active");
   const [mainTab, setMainTab] = useState<"jobs" | "negotiations" | "profile">("jobs");
+  const missingProProfilesNotified = useRef(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -50,16 +52,36 @@ const ProPanelPage = () => {
     loadProData();
   }, [user, authLoading, authProfile]);
 
+  const notifyMissingProProfilesTable = () => {
+    if (missingProProfilesNotified.current) return;
+
+    missingProProfilesNotified.current = true;
+    toast({
+      title: "Pro setup incomplete",
+      description: PRO_PROFILES_MISSING_MESSAGE,
+      variant: "destructive",
+    });
+  };
+
   const loadProData = async () => {
     if (!user) return;
 
     // Fetch pro profile
-    const { data: pp } = await supabase.from("pro_profiles").select("*").eq("user_id", user.id).single();
+    const fallbackName = user.user_metadata?.full_name || "";
+    const fallbackAvatar = `https://api.dicebear.com/7.x/initials/svg?seed=${fallbackName || "P"}`;
+    const { data: pp, missingTable } = await fetchOwnProProfile(user.id);
+
+    if (missingTable) {
+      notifyMissingProProfilesTable();
+    }
+
+    const resolvedFullName = (pp as any)?.full_name || fallbackName;
+    const resolvedAvatar = (pp as any)?.avatar_url || fallbackAvatar;
 
     if (pp) {
       const p = pp as any;
       setProfile({
-        fullName: p.full_name || "", email: user.email || "", phone: p.phone || "",
+        fullName: p.full_name || fallbackName, email: user.email || "", phone: p.phone || "",
         city: p.city || "", state: "", zipCode: "",
         profession: p.profession || "", bio: p.bio || "",
         hourlyRate: String(p.hourly_rate || 0), yearsExperience: String(p.years_experience || 0),
@@ -67,7 +89,14 @@ const ProPanelPage = () => {
       });
       setSkills(p.skills || []);
       setAvailability(p.availability_schedule || []);
-      setAvatarPreview(p.avatar_url || `https://api.dicebear.com/7.x/initials/svg?seed=${p.full_name || "P"}`);
+      setAvatarPreview(resolvedAvatar);
+    } else {
+      setProfile((prev) => ({
+        ...prev,
+        fullName: fallbackName,
+        email: user.email || "",
+      }));
+      setAvatarPreview(fallbackAvatar);
     }
 
     // Compute stats from real booking data
@@ -119,8 +148,8 @@ const ProPanelPage = () => {
       negs.push({
         id: (n as any).id,
         proId: user.id,
-        proName: profile.fullName || "You",
-        proAvatar: avatarPreview,
+        proName: resolvedFullName || "You",
+        proAvatar: resolvedAvatar,
         clientName: clientMap[(n as any).client_id] || "Client",
         service: (n as any).service,
         listedRate: (n as any).listed_rate,
@@ -200,7 +229,34 @@ const ProPanelPage = () => {
     const { data: { publicUrl } } = supabase.storage.from("avatars").getPublicUrl(path);
     const avatarUrl = `${publicUrl}?t=${Date.now()}`;
 
-    await supabase.from("pro_profiles").update({ avatar_url: avatarUrl } as any).eq("user_id", user.id);
+    const { error, missingTable } = await saveOwnProProfile({
+      user_id: user.id,
+      full_name: profile.fullName || user.user_metadata?.full_name || "",
+      phone: profile.phone,
+      city: profile.city,
+      profession: profile.profession,
+      bio: profile.bio,
+      hourly_rate: parseInt(profile.hourlyRate) || 0,
+      years_experience: parseInt(profile.yearsExperience) || 0,
+      response_time: profile.responseTime,
+      available: profile.available,
+      skills,
+      availability_schedule: availability,
+      avatar_url: avatarUrl,
+    });
+
+    if (missingTable) {
+      notifyMissingProProfilesTable();
+      setUploadingAvatar(false);
+      return;
+    }
+
+    if (error) {
+      toast({ title: "Upload failed", description: error.message, variant: "destructive" });
+      setUploadingAvatar(false);
+      return;
+    }
+
     setAvatarPreview(avatarUrl);
     setUploadingAvatar(false);
     toast({ title: "Photo updated!", description: "Your profile photo has been saved." });
@@ -208,7 +264,13 @@ const ProPanelPage = () => {
 
   const handleSave = async () => {
     if (!user) return;
-    const { error } = await supabase.from("pro_profiles").update({
+    const rate = parseInt(profile.hourlyRate) || 0;
+    if (rate < 500) {
+      toast({ title: "Invalid rate", description: "Hourly rate must be at least PKR 500.", variant: "destructive" });
+      return;
+    }
+    const { error, missingTable } = await saveOwnProProfile({
+      user_id: user.id,
       full_name: profile.fullName,
       phone: profile.phone,
       city: profile.city,
@@ -220,10 +282,16 @@ const ProPanelPage = () => {
       available: profile.available,
       skills,
       availability_schedule: availability,
-    } as any).eq("user_id", user.id);
+      avatar_url: avatarPreview,
+    });
+
+    if (missingTable) {
+      notifyMissingProProfilesTable();
+      return;
+    }
 
     if (error) {
-      toast({ title: "Error", description: "Failed to save. Try again.", variant: "destructive" });
+      toast({ title: "Error", description: error.message || "Failed to save. Try again.", variant: "destructive" });
     } else {
       toast({ title: "Profile saved!", description: "Your changes have been saved successfully." });
     }
@@ -414,7 +482,7 @@ const ProPanelPage = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2"><Label htmlFor="fullName">Full Name</Label><Input id="fullName" value={profile.fullName} onChange={(e) => handleChange("fullName", e.target.value)} /></div>
                     <div className="space-y-2"><Label htmlFor="phone">Phone</Label><Input id="phone" type="tel" value={profile.phone} onChange={(e) => handleChange("phone", e.target.value)} /></div>
-                    <div className="space-y-2"><Label htmlFor="city">City</Label><Input id="city" value={profile.city} onChange={(e) => handleChange("city", e.target.value)} /></div>
+                     <div className="space-y-2"><Label htmlFor="city">City</Label><Input id="city" value={profile.city} onChange={(e) => handleChange("city", e.target.value.replace(/[0-9]/g, ""))} /></div>
                   </div>
                 </div>
 
@@ -431,7 +499,8 @@ const ProPanelPage = () => {
                     <div className="space-y-2"><Label htmlFor="yearsExperience">Years of Experience</Label><Input id="yearsExperience" type="number" value={profile.yearsExperience} onChange={(e) => handleChange("yearsExperience", e.target.value)} /></div>
                     <div className="space-y-2">
                       <Label htmlFor="hourlyRate">Hourly Rate (PKR)</Label>
-                      <div className="relative"><DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input id="hourlyRate" type="number" className="pl-9" value={profile.hourlyRate} onChange={(e) => handleChange("hourlyRate", e.target.value)} /></div>
+                      <div className="relative"><DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input id="hourlyRate" type="number" className="pl-9" min={500} value={profile.hourlyRate} onChange={(e) => handleChange("hourlyRate", e.target.value)} /></div>
+                      <p className="text-xs text-muted-foreground">Minimum PKR 500</p>
                     </div>
                     <div className="space-y-2">
                       <Label>Response Time</Label>

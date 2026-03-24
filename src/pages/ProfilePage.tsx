@@ -14,7 +14,7 @@ import { useAuth } from "@/hooks/useAuth";
 const ProfilePage = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { refreshProfile } = useAuth();
+  const { user: authUser, profile: authProfile, refreshProfile, loading: authLoading } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -27,32 +27,55 @@ const ProfilePage = () => {
   });
 
   useEffect(() => {
+    let isMounted = true;
+
     const loadProfile = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
+      if (authLoading) return;
+
+      if (!authUser) {
         navigate("/signin");
         return;
       }
 
-      const { data: profile } = await supabase
+      setLoading(true);
+
+      const fallbackName = authProfile?.full_name || authUser.user_metadata?.full_name || "";
+      const fallbackPhone = authProfile?.phone || "";
+      const fallbackCity = authProfile?.city || "";
+      const fallbackAddress = authProfile?.address || "";
+
+      const { data: profile, error } = await supabase
         .from("profiles")
         .select("*")
-        .eq("user_id", user.id)
-        .single();
+        .eq("user_id", authUser.id)
+        .maybeSingle();
 
-      if (profile) {
-        setForm({
-          full_name: profile.full_name || "",
-          phone: (profile as any).phone || "",
-          city: (profile as any).city || "",
-          address: (profile as any).address || "",
+      if (!isMounted) return;
+
+      if (error) {
+        toast({
+          title: "Could not load profile",
+          description: error.message,
+          variant: "destructive",
         });
       }
+
+      setForm({
+        full_name: profile?.full_name?.trim() ? profile.full_name : fallbackName,
+        phone: profile?.phone || fallbackPhone,
+        city: profile?.city || fallbackCity,
+        address: profile?.address || fallbackAddress,
+      });
+
       setLoading(false);
     };
 
-    loadProfile();
-  }, [navigate]);
+    void loadProfile();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [authLoading, authProfile, authUser, navigate, toast]);
 
   const validate = () => {
     const newErrors: Record<string, string> = {};
@@ -74,28 +97,61 @@ const ProfilePage = () => {
 
   const handleSave = async () => {
     if (!validate()) return;
+    if (!authUser) {
+      toast({ title: "Not signed in", description: "Please sign in again.", variant: "destructive" });
+      return;
+    }
 
     setSaving(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const payload = {
+      user_id: authUser.id,
+      full_name: form.full_name.trim(),
+      phone: form.phone.trim(),
+      city: form.city.trim(),
+      address: form.address.trim(),
+      is_labourer: authProfile?.is_labourer ?? Boolean(authUser.user_metadata?.is_labourer),
+      updated_at: new Date().toISOString(),
+    };
 
-    const { error } = await supabase
+    const { data: existingProfile, error: existingProfileError } = await supabase
       .from("profiles")
-      .update({
-        full_name: form.full_name.trim(),
-        phone: form.phone.trim(),
-        city: form.city.trim(),
-        address: form.address.trim(),
-        updated_at: new Date().toISOString(),
-      } as any)
-      .eq("user_id", user.id);
+      .select("id")
+      .eq("user_id", authUser.id)
+      .maybeSingle();
+
+    if (existingProfileError) {
+      setSaving(false);
+      toast({ title: "Error", description: existingProfileError.message, variant: "destructive" });
+      return;
+    }
+
+    const saveQuery = existingProfile?.id
+      ? supabase
+          .from("profiles")
+          .update(payload as any)
+          .eq("id", existingProfile.id)
+          .select("*")
+          .single()
+      : supabase
+          .from("profiles")
+          .insert(payload as any)
+          .select("*")
+          .single();
+
+    const { data: savedProfile, error } = await saveQuery;
 
     setSaving(false);
 
-    if (error) {
-      toast({ title: "Error", description: "Failed to update profile. Please try again.", variant: "destructive" });
+    if (error || !savedProfile) {
+      toast({ title: "Error", description: error.message || "Failed to update profile. Please try again.", variant: "destructive" });
     } else {
       await refreshProfile();
+      setForm({
+        full_name: savedProfile.full_name || "",
+        phone: (savedProfile as any).phone || "",
+        city: (savedProfile as any).city || "",
+        address: (savedProfile as any).address || "",
+      });
       toast({ title: "Profile updated!", description: "Your details have been saved." });
     }
   };
@@ -178,7 +234,7 @@ const ProfilePage = () => {
                   id="city"
                   placeholder="Lahore"
                   value={form.city}
-                  onChange={(e) => handleChange("city", e.target.value)}
+                  onChange={(e) => handleChange("city", e.target.value.replace(/[0-9]/g, ""))}
                   className={errors.city ? "border-destructive" : ""}
                   maxLength={100}
                 />

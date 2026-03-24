@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { User, MapPin, Phone, Save, ArrowLeft, AlertCircle, Briefcase, DollarSign, Clock, Camera, Wrench, FileText, Plus, X } from "lucide-react";
@@ -14,6 +14,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { categories } from "@/lib/mockData";
+import { fetchOwnProProfile, PRO_PROFILES_MISSING_MESSAGE, saveOwnProProfile } from "@/lib/proProfiles";
 
 const availabilityOptions = ["Weekdays", "Weekends", "Evenings", "Mornings", "Flexible"];
 
@@ -41,6 +42,7 @@ const ProProfilePage2 = () => {
   const [availability, setAvailability] = useState<string[]>([]);
   const [avatarPreview, setAvatarPreview] = useState("");
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const missingProProfilesNotified = useRef(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -49,13 +51,32 @@ const ProProfilePage2 = () => {
     loadProfile();
   }, [user, authLoading, authProfile]);
 
+  const notifyMissingProProfilesTable = () => {
+    if (missingProProfilesNotified.current) return;
+
+    missingProProfilesNotified.current = true;
+    toast({
+      title: "Pro setup incomplete",
+      description: PRO_PROFILES_MISSING_MESSAGE,
+      variant: "destructive",
+    });
+  };
+
   const loadProfile = async () => {
     if (!user) return;
-    const { data: pp } = await supabase.from("pro_profiles").select("*").eq("user_id", user.id).single();
+
+    const fallbackName = user.user_metadata?.full_name || "";
+    const fallbackAvatar = `https://api.dicebear.com/7.x/initials/svg?seed=${fallbackName || "P"}`;
+    const { data: pp, missingTable } = await fetchOwnProProfile(user.id);
+
+    if (missingTable) {
+      notifyMissingProProfilesTable();
+    }
+
     if (pp) {
       const p = pp as any;
       setForm({
-        full_name: p.full_name || "",
+        full_name: p.full_name || fallbackName,
         phone: p.phone || "",
         city: p.city || "",
         profession: p.profession || "",
@@ -67,8 +88,12 @@ const ProProfilePage2 = () => {
       });
       setSkills(p.skills || []);
       setAvailability(p.availability_schedule || []);
-      setAvatarPreview(p.avatar_url || `https://api.dicebear.com/7.x/initials/svg?seed=${p.full_name || "P"}`);
+      setAvatarPreview(p.avatar_url || fallbackAvatar);
+    } else {
+      setForm((prev) => ({ ...prev, full_name: fallbackName }));
+      setAvatarPreview(fallbackAvatar);
     }
+
     setLoading(false);
   };
 
@@ -79,6 +104,8 @@ const ProProfilePage2 = () => {
     if (form.phone.trim() && !/^[\d\s\-+()]{7,20}$/.test(form.phone.trim())) e.phone = "Enter a valid phone number";
     if (!form.city.trim()) e.city = "City is required";
     if (!form.profession) e.profession = "Select your profession";
+    const rate = parseInt(form.hourly_rate) || 0;
+    if (rate < 500) e.hourly_rate = "Hourly rate must be at least PKR 500";
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -113,18 +140,9 @@ const ProProfilePage2 = () => {
 
     const { data: { publicUrl } } = supabase.storage.from("avatars").getPublicUrl(path);
     const avatarUrl = `${publicUrl}?t=${Date.now()}`;
-    await supabase.from("pro_profiles").update({ avatar_url: avatarUrl } as any).eq("user_id", user.id);
-    setAvatarPreview(avatarUrl);
-    setUploadingAvatar(false);
-    toast({ title: "Photo updated!", description: "Your profile photo has been saved." });
-  };
 
-  const handleSave = async () => {
-    if (!validate()) return;
-    if (!user) return;
-    setSaving(true);
-
-    const { error } = await supabase.from("pro_profiles").update({
+    const { error, missingTable } = await saveOwnProProfile({
+      user_id: user.id,
       full_name: form.full_name.trim(),
       phone: form.phone.trim(),
       city: form.city.trim(),
@@ -136,11 +154,56 @@ const ProProfilePage2 = () => {
       available: form.available,
       skills,
       availability_schedule: availability,
-    } as any).eq("user_id", user.id);
+      avatar_url: avatarUrl,
+    });
+
+    if (missingTable) {
+      notifyMissingProProfilesTable();
+      setUploadingAvatar(false);
+      return;
+    }
+
+    if (error) {
+      toast({ title: "Upload failed", description: error.message, variant: "destructive" });
+      setUploadingAvatar(false);
+      return;
+    }
+
+    setAvatarPreview(avatarUrl);
+    setUploadingAvatar(false);
+    toast({ title: "Photo updated!", description: "Your profile photo has been saved." });
+  };
+
+  const handleSave = async () => {
+    if (!validate()) return;
+    if (!user) return;
+    setSaving(true);
+
+    const payload = {
+      user_id: user.id,
+      full_name: form.full_name.trim(),
+      phone: form.phone.trim(),
+      city: form.city.trim(),
+      profession: form.profession,
+      bio: form.bio.trim(),
+      hourly_rate: parseInt(form.hourly_rate) || 0,
+      years_experience: parseInt(form.years_experience) || 0,
+      response_time: form.response_time,
+      available: form.available,
+      skills,
+      availability_schedule: availability,
+    };
+
+    const { error, missingTable } = await saveOwnProProfile(payload as any);
 
     setSaving(false);
+    if (missingTable) {
+      notifyMissingProProfilesTable();
+      return;
+    }
+
     if (error) {
-      toast({ title: "Error", description: "Failed to update profile. Please try again.", variant: "destructive" });
+      toast({ title: "Error", description: error.message || "Failed to update profile. Please try again.", variant: "destructive" });
     } else {
       await refreshProfile();
       toast({ title: "Profile updated!", description: "Your details have been saved." });
@@ -208,7 +271,7 @@ const ProProfilePage2 = () => {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="city" className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-muted-foreground" /> City <span className="text-destructive">*</span></Label>
-                <Input id="city" value={form.city} onChange={(e) => handleChange("city", e.target.value)} className={errors.city ? "border-destructive" : ""} maxLength={100} />
+                <Input id="city" value={form.city} onChange={(e) => handleChange("city", e.target.value.replace(/[0-9]/g, ""))} className={errors.city ? "border-destructive" : ""} maxLength={100} />
                 {errors.city && <p className="text-xs text-destructive flex items-center gap-1"><AlertCircle className="w-3 h-3" />{errors.city}</p>}
               </div>
             </div>
@@ -232,11 +295,13 @@ const ProProfilePage2 = () => {
                 <Input id="years_experience" type="number" value={form.years_experience} onChange={(e) => handleChange("years_experience", e.target.value)} />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="hourly_rate">Hourly Rate (PKR)</Label>
+                <Label htmlFor="hourly_rate">Hourly Rate (PKR) <span className="text-destructive">*</span></Label>
                 <div className="relative">
                   <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input id="hourly_rate" type="number" className="pl-9" value={form.hourly_rate} onChange={(e) => handleChange("hourly_rate", e.target.value)} />
+                  <Input id="hourly_rate" type="number" className={`pl-9 ${errors.hourly_rate ? "border-destructive" : ""}`} min={500} value={form.hourly_rate} onChange={(e) => handleChange("hourly_rate", e.target.value)} />
                 </div>
+                <p className="text-xs text-muted-foreground">Minimum PKR 500</p>
+                {errors.hourly_rate && <p className="text-xs text-destructive flex items-center gap-1"><AlertCircle className="w-3 h-3" />{errors.hourly_rate}</p>}
               </div>
               <div className="space-y-2">
                 <Label>Response Time</Label>

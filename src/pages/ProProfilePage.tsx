@@ -172,14 +172,14 @@ const ProProfilePage = () => {
             </div>
           </div>
           <div className="flex flex-col gap-2 w-full md:w-auto">
-            <Button className="bg-primary text-primary-foreground hover:bg-primary-dark glow-yellow-sm" onClick={() => {
+            <Button disabled={!pro.available} className="bg-primary text-primary-foreground hover:bg-primary-dark glow-yellow-sm disabled:opacity-50" onClick={() => {
               if (!user) { toast({ title: "Sign in required", description: "Please sign in to book." }); navigate("/signin"); return; }
               if (authProfile?.is_labourer) { toast({ title: "Not allowed", description: "Professionals cannot hire other professionals. Only clients can book services.", variant: "destructive" }); return; }
               if (!isProfileComplete) { toast({ title: "Complete your profile", description: "Please fill in all profile details before booking." }); navigate("/profile"); return; }
               if (authProfile?.city && pro.city && authProfile.city.trim().toLowerCase() !== pro.city.trim().toLowerCase()) { toast({ title: "Location mismatch", description: `This professional is based in ${pro.city}. You can only hire professionals in your city (${authProfile.city}).`, variant: "destructive" }); return; }
               navigate(`/book/${pro.id}`);
-            }}>Book a Slot</Button>
-            <Button variant="outline" className="border-primary text-primary hover:bg-primary hover:text-primary-foreground" onClick={() => {
+            }}>{pro.available ? "Book a Slot" : "Currently Unavailable"}</Button>
+            <Button variant="outline" disabled={!pro.available} className="border-primary text-primary hover:bg-primary hover:text-primary-foreground disabled:opacity-50" onClick={() => {
               if (!user) { toast({ title: "Sign in required", description: "Please sign in first." }); navigate("/signin"); return; }
               if (authProfile?.is_labourer) { toast({ title: "Not allowed", description: "Professionals cannot hire other professionals.", variant: "destructive" }); return; }
               if (!isProfileComplete) { toast({ title: "Complete your profile", description: "Please fill in all profile details first." }); navigate("/profile"); return; }
@@ -276,57 +276,69 @@ const ProProfilePage = () => {
 
             <div className="bg-card border border-border rounded-lg p-5">
               <h3 className="font-heading font-bold text-lg text-foreground mb-3">Availability</h3>
-              <p className="text-sm text-muted-foreground mb-3">{today.toLocaleDateString("en-US", { month: "long", year: "numeric" })}</p>
-              <div className="grid grid-cols-7 gap-1 text-center mb-1">
-                {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
-                  <span key={i} className="text-xs text-muted-foreground font-medium py-1">{d}</span>
-                ))}
-              </div>
-              <div className="grid grid-cols-7 gap-1">
-                {Array.from({ length: firstDay }).map((_, i) => <div key={`e-${i}`} />)}
-                {Array.from({ length: daysInMonth }).map((_, i) => {
-                  const day = i + 1;
-                  const isPast = day < today.getDate();
-                  const isSelected = selectedDate === day;
-                  return (
-                    <button key={day} disabled={isPast} onClick={() => setSelectedDate(day)}
-                      className={`text-xs py-1.5 rounded transition-all ${
-                        isSelected ? "bg-success text-success-foreground font-bold"
-                        : !isPast ? "bg-primary/20 text-primary hover:bg-primary/40 cursor-pointer"
-                        : "bg-muted/50 text-muted-foreground cursor-not-allowed"
-                      }`}>{day}</button>
-                  );
-                })}
-              </div>
-              {selectedDate && (
-                <div className="mt-4">
-                  <p className="text-sm text-foreground font-medium mb-2">Time Slots</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {timeSlots.map((slot) => {
-                      const booked = bookedSlots.includes(slot);
-                      const active = selectedSlot === slot;
+              {pro.available ? (
+                <>
+                  <p className="text-sm text-muted-foreground mb-3">{today.toLocaleDateString("en-US", { month: "long", year: "numeric" })}</p>
+                  <div className="grid grid-cols-7 gap-1 text-center mb-1">
+                    {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+                      <span key={i} className="text-xs text-muted-foreground font-medium py-1">{d}</span>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-7 gap-1">
+                    {Array.from({ length: firstDay }).map((_, i) => <div key={`e-${i}`} />)}
+                    {Array.from({ length: daysInMonth }).map((_, i) => {
+                      const day = i + 1;
+                      const isPast = day < today.getDate();
+                      const isSelected = selectedDate === day;
                       return (
-                        <button key={slot} disabled={booked} onClick={() => setSelectedSlot(slot)}
-                          className={`text-xs py-2 rounded transition-all ${
-                            active ? "bg-primary text-primary-foreground font-bold"
-                            : booked ? "bg-muted/50 text-muted-foreground line-through cursor-not-allowed"
-                            : "bg-primary/15 text-primary hover:bg-primary/30 cursor-pointer"
-                          }`}>{slot}</button>
+                        <button key={day} disabled={isPast} onClick={() => setSelectedDate(day)}
+                          className={`text-xs py-1.5 rounded transition-all ${
+                            isSelected ? "bg-success text-success-foreground font-bold"
+                            : !isPast ? "bg-primary/20 text-primary hover:bg-primary/40 cursor-pointer"
+                            : "bg-muted/50 text-muted-foreground cursor-not-allowed"
+                          }`}>{day}</button>
                       );
                     })}
                   </div>
+                  {selectedDate && (
+                    <div className="mt-4">
+                      <p className="text-sm text-foreground font-medium mb-2">Time Slots</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {timeSlots.map((slot) => {
+                          const booked = bookedSlots.includes(slot);
+                          const active = selectedSlot === slot;
+                          return (
+                            <button key={slot} disabled={booked} onClick={() => setSelectedSlot(slot)}
+                              className={`text-xs py-2 rounded transition-all ${
+                                active ? "bg-primary text-primary-foreground font-bold"
+                                : booked ? "bg-muted/50 text-muted-foreground line-through cursor-not-allowed"
+                                : "bg-primary/15 text-primary hover:bg-primary/30 cursor-pointer"
+                              }`}>{slot}</button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {selectedDate && selectedSlot && (
+                    <Button className="w-full mt-4 bg-primary text-primary-foreground hover:bg-primary-dark glow-yellow-sm" onClick={() => {
+                      if (!user) { toast({ title: "Sign in required", description: "Please sign in to book." }); navigate("/signin"); return; }
+                      if (authProfile?.is_labourer) { toast({ title: "Not allowed", description: "Professionals cannot hire other professionals.", variant: "destructive" }); return; }
+                      if (!isProfileComplete) { toast({ title: "Complete your profile", description: "Please fill in all profile details before booking." }); navigate("/profile"); return; }
+                      if (authProfile?.city && pro.city && authProfile.city.trim().toLowerCase() !== pro.city.trim().toLowerCase()) { toast({ title: "Location mismatch", description: `This professional is based in ${pro.city}. You can only hire professionals in your city (${authProfile.city}).`, variant: "destructive" }); return; }
+                      navigate(`/book/${pro.id}`);
+                    }}>
+                      Confirm Booking
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <div className="text-center py-6">
+                  <div className="w-10 h-10 rounded-full bg-destructive/15 flex items-center justify-center mx-auto mb-3">
+                    <Clock className="w-5 h-5 text-destructive" />
+                  </div>
+                  <p className="text-sm font-semibold text-foreground mb-1">Not Accepting Bookings</p>
+                  <p className="text-xs text-muted-foreground">This professional is currently unavailable. Check back later.</p>
                 </div>
-              )}
-              {selectedDate && selectedSlot && (
-                <Button className="w-full mt-4 bg-primary text-primary-foreground hover:bg-primary-dark glow-yellow-sm" onClick={() => {
-                  if (!user) { toast({ title: "Sign in required", description: "Please sign in to book." }); navigate("/signin"); return; }
-                  if (authProfile?.is_labourer) { toast({ title: "Not allowed", description: "Professionals cannot hire other professionals.", variant: "destructive" }); return; }
-                  if (!isProfileComplete) { toast({ title: "Complete your profile", description: "Please fill in all profile details before booking." }); navigate("/profile"); return; }
-                  if (authProfile?.city && pro.city && authProfile.city.trim().toLowerCase() !== pro.city.trim().toLowerCase()) { toast({ title: "Location mismatch", description: `This professional is based in ${pro.city}. You can only hire professionals in your city (${authProfile.city}).`, variant: "destructive" }); return; }
-                  navigate(`/book/${pro.id}`);
-                }}>
-                  Confirm Booking
-                </Button>
               )}
             </div>
           </div>

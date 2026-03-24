@@ -53,7 +53,7 @@ const Navbar = () => {
             {user ? (
               <>
                 <Button variant="outline" size="lg" className="border-border text-foreground hover:border-primary hover:text-primary text-base px-6" onClick={() => navigate(isLabourer ? "/pro-profile" : "/profile")}>
-                  <User className="w-4 h-4 mr-2" /> {profile?.full_name || "Profile"}
+                  <User className="w-4 h-4 mr-2" /> Profile
                 </Button>
                 <Button size="lg" variant="outline" className="border-border text-muted-foreground hover:border-destructive hover:text-destructive text-base px-4" onClick={handleSignOut}>
                   <LogOut className="w-4 h-4" />

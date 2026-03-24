@@ -56,7 +56,12 @@ const ProCard = ({ pro, index = 0 }: ProCardProps) => {
         <span className="text-lg font-bold text-foreground">
           PKR {pro.hourlyRate}<span className="text-sm font-normal text-muted-foreground">/hr</span>
         </span>
-        <button className="text-xs text-primary hover:underline font-medium">Negotiate</button>
+        {!pro.available && (
+          <span className="text-xs font-semibold text-destructive">Unavailable</span>
+        )}
+        {pro.available && (
+          <button className="text-xs text-primary hover:underline font-medium">Negotiate</button>
+        )}
       </div>
 
       {pro.availability.length > 0 && (
@@ -71,8 +76,8 @@ const ProCard = ({ pro, index = 0 }: ProCardProps) => {
         <Button variant="outline" className="flex-1 border-border text-foreground hover:border-primary hover:text-primary" onClick={() => navigate(`/pro/${pro.id}`)}>
           View Profile
         </Button>
-        <Button className="flex-1 bg-primary text-primary-foreground hover:bg-primary-dark" onClick={() => navigate(`/book/${pro.id}`)}>
-          Book Now
+        <Button className="flex-1 bg-primary text-primary-foreground hover:bg-primary-dark" disabled={!pro.available} onClick={() => navigate(`/book/${pro.id}`)}>
+          {pro.available ? "Book Now" : "Unavailable"}
         </Button>
       </div>
     </motion.div>

@@ -11,6 +11,7 @@ import ReviewModal from "@/components/ReviewModal";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchProProfilesByUserIds } from "@/lib/proProfiles";
 
 const DashboardPage = () => {
   const navigate = useNavigate();
@@ -42,9 +43,7 @@ const DashboardPage = () => {
       .order("booking_date", { ascending: false });
 
     const proIds = [...new Set((bookingData || []).map((b: any) => b.pro_id))];
-    const { data: proProfiles } = proIds.length > 0
-      ? await supabase.from("pro_profiles").select("*").in("user_id", proIds)
-      : { data: [] };
+    const { data: proProfiles } = await fetchProProfilesByUserIds(proIds);
     const proMap: Record<string, any> = {};
     (proProfiles || []).forEach((p: any) => { proMap[p.user_id] = p; });
 
@@ -62,9 +61,7 @@ const DashboardPage = () => {
       .order("created_at", { ascending: false });
 
     const negProIds = [...new Set((negData || []).map((n: any) => n.pro_id))];
-    const { data: negProProfiles } = negProIds.length > 0
-      ? await supabase.from("pro_profiles").select("*").in("user_id", negProIds)
-      : { data: [] };
+    const { data: negProProfiles } = await fetchProProfilesByUserIds(negProIds);
     const negProMap: Record<string, any> = {};
     (negProProfiles || []).forEach((p: any) => { negProMap[p.user_id] = p; });
 
@@ -104,9 +101,7 @@ const DashboardPage = () => {
       .eq("client_id", user.id);
 
     const favProIds = [...new Set((favData || []).map((f: any) => f.pro_id))];
-    const { data: favProProfiles } = favProIds.length > 0
-      ? await supabase.from("pro_profiles").select("*").in("user_id", favProIds)
-      : { data: [] };
+    const { data: favProProfiles } = await fetchProProfilesByUserIds(favProIds);
     const favProMap: Record<string, any> = {};
     (favProProfiles || []).forEach((p: any) => { favProMap[p.user_id] = p; });
 

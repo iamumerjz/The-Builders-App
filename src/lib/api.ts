@@ -1,11 +1,10 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { Professional } from "@/lib/mockData";
+import { fetchAllProProfiles, fetchProProfileById as fetchProProfileRecordById } from "@/lib/proProfiles";
 
 // Fetch all pro profiles with their average ratings
 export const fetchProfessionals = async (): Promise<Professional[]> => {
-  const { data: pros, error } = await supabase
-    .from("pro_profiles")
-    .select("*");
+  const { data: pros, error } = await fetchAllProProfiles();
 
   if (error || !pros) return [];
 
@@ -51,11 +50,7 @@ export const fetchProfessionals = async (): Promise<Professional[]> => {
 
 // Fetch a single pro by pro_profiles.id
 export const fetchProfessionalById = async (id: string): Promise<Professional | null> => {
-  const { data: p, error } = await supabase
-    .from("pro_profiles")
-    .select("*")
-    .eq("id", id)
-    .single();
+  const { data: p, error } = await fetchProProfileRecordById(id);
 
   if (error || !p) return null;
 

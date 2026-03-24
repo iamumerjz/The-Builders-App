@@ -1,10 +1,18 @@
-import { useState, useEffect, createContext, useContext, ReactNode } from "react";
+import { useState, useEffect, useRef, createContext, useContext, ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { User } from "@supabase/supabase-js";
 
+type AuthProfile = {
+  full_name: string;
+  is_labourer: boolean;
+  city: string;
+  phone: string;
+  address: string;
+};
+
 interface AuthContext {
   user: User | null;
-  profile: { full_name: string; is_labourer: boolean; city: string; phone: string; address: string } | null;
+  profile: AuthProfile | null;
   loading: boolean;
   isProfileComplete: boolean;
   refreshProfile: () => Promise<void>;
@@ -17,64 +25,111 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<AuthContext["profile"]>(null);
   const [loading, setLoading] = useState(true);
+  const hasResolvedInitialSession = useRef(false);
 
-  const fetchProfile = async (userId: string) => {
-    const { data } = await supabase.from("profiles").select("*").eq("user_id", userId).single();
-    if (data) {
-      setProfile({
-        full_name: data.full_name || "",
-        is_labourer: data.is_labourer,
+  const getFallbackProfile = (currentUser: User): AuthProfile => ({
+    full_name: typeof currentUser.user_metadata?.full_name === "string" ? currentUser.user_metadata.full_name : "",
+    is_labourer: Boolean(currentUser.user_metadata?.is_labourer),
+    city: "",
+    phone: "",
+    address: "",
+  });
+
+  const fetchProfile = async (currentUser: User): Promise<AuthProfile> => {
+    const fallbackProfile = getFallbackProfile(currentUser);
+
+    try {
+      const { data } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("user_id", currentUser.id)
+        .maybeSingle();
+
+      if (!data) {
+        return fallbackProfile;
+      }
+
+      return {
+        full_name: data.full_name || fallbackProfile.full_name,
+        is_labourer: data.is_labourer ?? fallbackProfile.is_labourer,
         city: data.city || "",
         phone: data.phone || "",
         address: data.address || "",
-      });
+      };
+    } catch {
+      return fallbackProfile;
     }
   };
 
   useEffect(() => {
     let mounted = true;
+    let activeSyncId = 0;
 
-    // First get the existing session
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!mounted) return;
-      const u = session?.user ?? null;
-      setUser(u);
-      if (u) {
-        await fetchProfile(u.id);
+    const syncAuthState = (currentUser: User | null, options?: { blockUi?: boolean }) => {
+      const syncId = ++activeSyncId;
+      const blockUi = options?.blockUi ?? false;
+
+      setUser(currentUser);
+
+      if (!currentUser) {
+        hasResolvedInitialSession.current = true;
+        setProfile(null);
+        setLoading(false);
+        return;
       }
-      if (mounted) setLoading(false);
+
+      const fallbackProfile = getFallbackProfile(currentUser);
+
+      if (blockUi) {
+        setProfile(fallbackProfile);
+        setLoading(true);
+      } else {
+        setProfile((prev) => prev ?? fallbackProfile);
+      }
+
+      void fetchProfile(currentUser)
+        .then((nextProfile) => {
+          if (!mounted || syncId !== activeSyncId) return;
+          setProfile(nextProfile);
+        })
+        .finally(() => {
+          if (!mounted || syncId !== activeSyncId) return;
+          hasResolvedInitialSession.current = true;
+          setLoading(false);
+        });
+    };
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+      syncAuthState(session?.user ?? null, { blockUi: false });
     });
 
-    // Then listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    void supabase.auth.getSession().then(({ data: { session } }) => {
       if (!mounted) return;
-      const u = session?.user ?? null;
-      setUser(u);
-      if (u) {
-        // Use setTimeout to avoid Supabase auth deadlock, but don't gate loading on it
-        // since getSession already handled the initial load
-        setTimeout(async () => {
-          if (mounted) await fetchProfile(u.id);
-        }, 0);
-      } else {
-        setProfile(null);
-      }
+      syncAuthState(session?.user ?? null, { blockUi: true });
     });
 
     return () => {
       mounted = false;
+      activeSyncId += 1;
       subscription.unsubscribe();
     };
   }, []);
 
   const refreshProfile = async () => {
-    if (user) await fetchProfile(user.id);
+    if (!user) return;
+    const nextProfile = await fetchProfile(user);
+    setProfile(nextProfile);
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setProfile(null);
+    const { error } = await supabase.auth.signOut();
+
+    if (!error) {
+      setUser(null);
+      setProfile(null);
+      setLoading(false);
+    }
   };
 
   const isProfileComplete = !!(profile?.full_name && profile?.phone && profile?.city && profile?.address);
