@@ -12,6 +12,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import type { Professional } from "@/lib/mockData";
+import StripePaymentForm from "@/components/StripePaymentForm";
 
 const BookingPage = () => {
   const { id } = useParams();
@@ -25,8 +26,9 @@ const BookingPage = () => {
   const [selectedSlot, setSelectedSlot] = useState("");
   const [offer, setOffer] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("card");
-  const [cardForm, setCardForm] = useState({ cardName: "", cardNumber: "", expiry: "", cvv: "" });
   const [bookedSlots, setBookedSlots] = useState<string[]>([]);
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [paymentLoading, setPaymentLoading] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -59,24 +61,47 @@ const BookingPage = () => {
   const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
   const firstDay = new Date(today.getFullYear(), today.getMonth(), 1).getDay();
 
-  const isCardValid = () => {
-    if (paymentMethod !== "card") return true;
-    const { cardName, cardNumber, expiry, cvv } = cardForm;
-    return cardName.trim().length > 0 && cardNumber.replace(/\s/g, "").length === 16 && expiry.length === 5 && cvv.length >= 3;
-  };
-
   const canNext = () => {
     if (step === 1) return !!selectedDate && !!selectedSlot;
-    if (step === 3) return isCardValid();
+    if (step === 2 && offer && parseInt(offer) < 500) return false;
     return true;
   };
 
   const stepTitles = ["Pick Date & Time", "Bargain (Optional)", "Confirm & Pay"];
 
+  const rate = offer ? parseInt(offer) : pro.hourlyRate;
+
+  const initStripePayment = async () => {
+    setPaymentLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("create-payment-intent", {
+        body: { amount: rate, description: `${service} - ${pro.name}` },
+      });
+      if (error || !data?.clientSecret) throw new Error(data?.error || "Failed to initialize payment");
+      setClientSecret(data.clientSecret);
+    } catch (err: any) {
+      toast({ title: "Payment Error", description: err.message, variant: "destructive" });
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
+  // When step 3 is reached and card is selected, init payment
+  const handleStepChange = (newStep: number) => {
+    setStep(newStep);
+    if (newStep === 3 && paymentMethod === "card" && !clientSecret) {
+      initStripePayment();
+    }
+  };
+
   const handleConfirmBooking = async () => {
     if (!user) {
       toast({ title: "Sign in required", description: "Please sign in to book." });
       navigate("/signin");
+      return;
+    }
+    if (rate < 500) {
+      toast({ title: "Amount too low", description: "Minimum rate for booking is PKR 500/hr.", variant: "destructive" });
       return;
     }
     if (!isProfileComplete) {
@@ -95,7 +120,6 @@ const BookingPage = () => {
 
     const bookingDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(selectedDate).padStart(2, "0")}`;
     const refCode = `BLD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-    const rate = offer ? parseInt(offer) : pro.hourlyRate;
 
     const { error } = await supabase.from("bookings").insert({
       client_id: user.id,
@@ -187,7 +211,6 @@ const BookingPage = () => {
                     <div className="flex flex-wrap gap-2">
                       {timeSlots.map((slot) => {
                         const booked = bookedSlots.includes(slot);
-                        // Check if slot is in the past for today
                         const isToday = selectedDate === today.getDate();
                         let isPastSlot = false;
                         if (isToday) {
@@ -211,7 +234,10 @@ const BookingPage = () => {
             {step === 2 && (
               <div className="bg-card border border-border rounded-lg p-6 space-y-4">
                 <p className="text-sm text-muted-foreground">{pro.name}'s rate: <span className="text-foreground font-bold">PKR {pro.hourlyRate}/hr</span></p>
-                <Input placeholder="Your Offer: PKR/hr (optional)" value={offer} onChange={(e) => setOffer(e.target.value)} className="bg-muted border-border text-foreground" />
+                <Input placeholder="Your Offer: PKR/hr (min 500)" value={offer} onChange={(e) => setOffer(e.target.value.replace(/\D/g, ""))} className="bg-muted border-border text-foreground" />
+                {offer && parseInt(offer) < 500 && (
+                  <p className="text-xs text-destructive">Minimum offer amount is PKR 500</p>
+                )}
                 <p className="text-xs text-muted-foreground">Pro will confirm within 2 hours</p>
               </div>
             )}
@@ -223,13 +249,16 @@ const BookingPage = () => {
                   <div className="flex justify-between"><span className="text-muted-foreground">Service</span><span className="text-foreground">{service}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Date</span><span className="text-foreground">{today.toLocaleDateString("en-US", { month: "long" })} {selectedDate}, {today.getFullYear()}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Time</span><span className="text-foreground">{selectedSlot}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Rate</span><span className="text-foreground font-bold">PKR {offer || pro.hourlyRate}/hr</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Rate</span><span className="text-foreground font-bold">PKR {rate}/hr</span></div>
                 </div>
                 <div className="border-t border-border pt-4">
                   <p className="text-sm font-medium text-foreground mb-3">Payment Method</p>
                   <div className="flex gap-2">
                     {[{ id: "card", icon: CreditCard, label: "Card" }, { id: "cash", icon: Banknote, label: "Cash" }].map((pm) => (
-                      <button key={pm.id} onClick={() => setPaymentMethod(pm.id)}
+                      <button key={pm.id} onClick={() => {
+                        setPaymentMethod(pm.id);
+                        if (pm.id === "card" && !clientSecret) initStripePayment();
+                      }}
                         className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm transition-all ${paymentMethod === pm.id ? "border-primary bg-primary/15 text-primary" : "border-border text-muted-foreground hover:border-primary/50"}`}>
                         <pm.icon className="w-4 h-4" />{pm.label}
                       </button>
@@ -237,22 +266,28 @@ const BookingPage = () => {
                   </div>
                 </div>
                 {paymentMethod === "card" && (
-                  <div className="border-t border-border pt-4 space-y-4">
-                    <div className="flex items-center gap-2"><CreditCard className="w-4 h-4 text-primary" /><p className="text-sm font-medium text-foreground">Card Details</p></div>
-                    <div className="space-y-3">
-                      <Input placeholder="Name on Card" value={cardForm.cardName} onChange={(e) => setCardForm(prev => ({ ...prev, cardName: e.target.value }))} className="bg-muted border-border text-foreground" />
-                      <div className="relative">
-                        <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                        <Input placeholder="1234 5678 9012 3456" value={cardForm.cardNumber} onChange={(e) => { let v = e.target.value.replace(/\D/g, "").replace(/(.{4})/g, "$1 ").trim().slice(0, 19); setCardForm(prev => ({ ...prev, cardNumber: v })); }} className="bg-muted border-border text-foreground pl-10" />
+                  <div className="border-t border-border pt-4">
+                    <div className="flex items-center gap-2 mb-4"><CreditCard className="w-4 h-4 text-primary" /><p className="text-sm font-medium text-foreground">Card Details</p></div>
+                    {paymentLoading && (
+                      <div className="flex items-center justify-center py-8">
+                        <span className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                        <span className="ml-3 text-muted-foreground text-sm">Loading payment form…</span>
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <Input placeholder="MM/YY" value={cardForm.expiry} onChange={(e) => { let v = e.target.value.replace(/\D/g, "").slice(0, 4); if (v.length > 2) v = v.slice(0, 2) + "/" + v.slice(2); setCardForm(prev => ({ ...prev, expiry: v })); }} className="bg-muted border-border text-foreground" />
-                        <Input placeholder="CVV" type="password" value={cardForm.cvv} onChange={(e) => { let v = e.target.value.replace(/\D/g, "").slice(0, 4); setCardForm(prev => ({ ...prev, cvv: v })); }} className="bg-muted border-border text-foreground" />
+                    )}
+                    {clientSecret && !paymentLoading && (
+                      <StripePaymentForm
+                        clientSecret={clientSecret}
+                        amount={rate}
+                        onSuccess={() => handleConfirmBooking()}
+                        onError={(msg) => toast({ title: "Payment failed", description: msg, variant: "destructive" })}
+                      />
+                    )}
+                    {!clientSecret && !paymentLoading && (
+                      <div className="text-center py-4">
+                        <p className="text-destructive text-sm mb-2">Failed to load payment form</p>
+                        <button onClick={initStripePayment} className="text-primary underline text-sm">Try again</button>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground bg-secondary rounded-lg p-3">
-                      <Lock className="w-3 h-3 text-primary flex-shrink-0" /><span>Your payment info is encrypted and secure.</span>
-                    </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -263,11 +298,11 @@ const BookingPage = () => {
         {step < 4 && !loading && (
           <div className="mt-6 flex gap-3">
             {step < 3 ? (
-              <Button disabled={!canNext()} onClick={() => { setStep(step + 1); toast({ title: `Step ${step} Complete`, description: `Moving to: ${stepTitles[step]}` }); }}
+              <Button disabled={!canNext()} onClick={() => { handleStepChange(step + 1); toast({ title: `Step ${step} Complete`, description: `Moving to: ${stepTitles[step]}` }); }}
                 className="flex-1 bg-primary text-primary-foreground hover:bg-primary-dark disabled:opacity-50">Continue</Button>
-            ) : (
-              <Button disabled={!isCardValid()} onClick={handleConfirmBooking} className="flex-1 bg-primary text-primary-foreground hover:bg-primary-dark glow-yellow disabled:opacity-50">Confirm Booking</Button>
-            )}
+            ) : paymentMethod === "cash" ? (
+              <Button onClick={handleConfirmBooking} className="flex-1 bg-primary text-primary-foreground hover:bg-primary-dark glow-yellow">Confirm Booking</Button>
+            ) : null}
           </div>
         )}
 

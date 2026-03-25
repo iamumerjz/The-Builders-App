@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Calendar, Clock, Star, Heart, ChevronRight, Wallet, Users, Briefcase, TrendingUp, MessageSquare } from "lucide-react";
+import { Calendar, Clock, Star, Heart, ChevronRight, Wallet, Users, Briefcase, TrendingUp, MessageSquare, ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
@@ -25,6 +25,7 @@ const DashboardPage = () => {
   const [stats, setStats] = useState({ totalSpent: 0, prosHired: 0, jobsCompleted: 0, avgRating: 0 });
   const [reviewedBookings, setReviewedBookings] = useState<Set<string>>(new Set());
   const [reviewBooking, setReviewBooking] = useState<any>(null);
+  const [workPhotosMap, setWorkPhotosMap] = useState<Record<string, any[]>>({});
 
   useEffect(() => {
     if (authLoading) return;
@@ -134,6 +135,18 @@ const DashboardPage = () => {
     const reviewedSet = new Set((existingReviews || []).map((r: any) => r.booking_id).filter(Boolean));
     setReviewedBookings(reviewedSet);
 
+    // Fetch work photos for all bookings
+    const bookingIds = (bookingData || []).map((b: any) => b.id);
+    if (bookingIds.length > 0) {
+      const { data: wpData } = await supabase.from("work_photos").select("*").in("booking_id", bookingIds);
+      const wpMap: Record<string, any[]> = {};
+      (wpData || []).forEach((wp: any) => {
+        if (!wpMap[wp.booking_id]) wpMap[wp.booking_id] = [];
+        wpMap[wp.booking_id].push(wp);
+      });
+      setWorkPhotosMap(wpMap);
+    }
+
     setLoading(false);
   };
 
@@ -150,6 +163,18 @@ const DashboardPage = () => {
 
     if (action === "accept" || action === "reject") {
       await supabase.from("negotiations").update({ status: action === "accept" ? "accepted" : "rejected" } as any).eq("id", negId);
+
+      // Sync associated booking status
+      const neg = negotiations.find(n => n.id === negId);
+      if (neg) {
+        const newBookingStatus = action === "accept" ? "accepted" : "rejected";
+        await supabase.from("bookings")
+          .update({ status: newBookingStatus } as any)
+          .eq("client_id", user.id)
+          .eq("pro_id", neg.proId)
+          .eq("service", neg.service)
+          .eq("status", "upcoming");
+      }
     }
 
     loadData();
@@ -295,6 +320,20 @@ const DashboardPage = () => {
                               </span>
                             </div>
                           </div>
+
+                          {/* Work Photos */}
+                          {(workPhotosMap[booking.id] || []).length > 0 && (
+                            <div className="mt-3 pt-3 border-t border-border">
+                              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1">
+                                <ImageIcon className="w-3 h-3" /> Work Photos
+                              </p>
+                              <div className="flex gap-2 flex-wrap">
+                                {(workPhotosMap[booking.id] || []).map((wp: any) => (
+                                  <img key={wp.id} src={wp.photo_url} alt="Work" className="w-20 h-20 object-cover rounded-lg border border-border" />
+                                ))}
+                              </div>
+                            </div>
+                          )}
 
                           {tab === "review" && (
                             <div className="mt-3 pt-3 border-t border-border">

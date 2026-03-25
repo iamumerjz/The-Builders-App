@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Calendar, Clock, MapPin, Phone, CheckCircle, ImagePlus, ChevronDown, ChevronUp, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Calendar, Clock, MapPin, Phone, CheckCircle, ImagePlus, ChevronDown, ChevronUp, ThumbsUp, ThumbsDown, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -25,12 +25,26 @@ const ProJobCard = ({ booking, clientProfile, workPhotos, onUpdate }: ProJobCard
 
   const handleAccept = async () => {
     await supabase.from("bookings").update({ status: "accepted" } as any).eq("id", booking.id);
+    // Also accept any related active negotiation
+    await supabase.from("negotiations")
+      .update({ status: "accepted" } as any)
+      .eq("client_id", booking.client_id)
+      .eq("pro_id", booking.pro_id)
+      .eq("service", booking.service)
+      .eq("status", "active");
     toast({ title: "Job accepted", description: "Client details are now visible. Good luck!" });
     onUpdate();
   };
 
   const handleReject = async () => {
     await supabase.from("bookings").update({ status: "rejected" } as any).eq("id", booking.id);
+    // Also reject any related active negotiation
+    await supabase.from("negotiations")
+      .update({ status: "rejected" } as any)
+      .eq("client_id", booking.client_id)
+      .eq("pro_id", booking.pro_id)
+      .eq("service", booking.service)
+      .eq("status", "active");
     toast({ title: "Job declined", description: "The client will be notified." });
     onUpdate();
   };
@@ -41,8 +55,9 @@ const ProJobCard = ({ booking, clientProfile, workPhotos, onUpdate }: ProJobCard
 
     setUploading(true);
     const userId = (await supabase.auth.getUser()).data.user?.id;
-    if (!userId) return;
+    if (!userId) { setUploading(false); return; }
 
+    let uploadedCount = 0;
     for (const file of Array.from(files)) {
       if (!file.type.startsWith("image/")) continue;
       if (file.size > 5 * 1024 * 1024) { toast({ title: "File too large", description: `${file.name} exceeds 5MB limit.`, variant: "destructive" }); continue; }
@@ -54,16 +69,25 @@ const ProJobCard = ({ booking, clientProfile, workPhotos, onUpdate }: ProJobCard
 
       const { data: { publicUrl } } = supabase.storage.from("work-photos").getPublicUrl(path);
 
-      await supabase.from("work_photos").insert({
+      const { error: insertError } = await supabase.from("work_photos").insert({
         booking_id: booking.id,
         uploaded_by: userId,
         photo_url: publicUrl,
-      } as any);
+      });
+
+      if (insertError) {
+        console.error("work_photos insert error:", insertError);
+        toast({ title: "Save failed", description: insertError.message, variant: "destructive" });
+        continue;
+      }
+      uploadedCount++;
     }
 
     setUploading(false);
-    toast({ title: "Photos uploaded", description: "Work photos have been saved." });
-    onUpdate();
+    if (uploadedCount > 0) {
+      toast({ title: "Photos uploaded", description: `${uploadedCount} photo(s) saved.` });
+      onUpdate();
+    }
   };
 
   const handleMarkComplete = async () => {
@@ -141,7 +165,26 @@ const ProJobCard = ({ booking, clientProfile, workPhotos, onUpdate }: ProJobCard
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Work Photos</p>
                 <div className="grid grid-cols-3 gap-2">
                   {workPhotos.map((wp: any) => (
-                    <img key={wp.id} src={wp.photo_url} alt="Work" className="w-full h-20 object-cover rounded-lg border border-border" />
+                    <div key={wp.id} className="relative group">
+                      <img src={wp.photo_url} alt="Work" className="w-full h-20 object-cover rounded-lg border border-border" />
+                      {isAccepted && (
+                        <button
+                          onClick={async () => {
+                            const urlParts = wp.photo_url.split("/work-photos/");
+                            const storagePath = urlParts[1] ? decodeURIComponent(urlParts[1]) : null;
+                            if (storagePath) {
+                              await supabase.storage.from("work-photos").remove([storagePath]);
+                            }
+                            await supabase.from("work_photos").delete().eq("id", wp.id);
+                            toast({ title: "Photo deleted" });
+                            onUpdate();
+                          }}
+                          className="absolute top-1 right-1 w-5 h-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>
@@ -149,15 +192,24 @@ const ProJobCard = ({ booking, clientProfile, workPhotos, onUpdate }: ProJobCard
 
             {/* Actions — only for accepted jobs */}
             {isAccepted && (
-              <div className="p-4 border-t border-border flex flex-wrap gap-2">
-                <label className={`flex items-center gap-2 px-4 py-2 rounded-lg border border-border text-sm text-foreground hover:border-primary transition-colors cursor-pointer ${uploading ? "opacity-50 pointer-events-none" : ""}`}>
-                  {uploading ? <span className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" /> : <ImagePlus className="w-4 h-4 text-primary" />}
-                  Upload Photos
-                  <input type="file" accept="image/*" multiple className="hidden" onChange={handleUploadPhotos} disabled={uploading} />
-                </label>
-                <Button onClick={handleMarkComplete} className="bg-success text-success-foreground hover:bg-success/90">
-                  <CheckCircle className="w-4 h-4 mr-1" /> Mark Complete
-                </Button>
+              <div className="p-4 border-t border-border space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  <label className={`flex items-center gap-2 px-4 py-2 rounded-lg border border-border text-sm text-foreground hover:border-primary transition-colors cursor-pointer ${uploading ? "opacity-50 pointer-events-none" : ""}`}>
+                    {uploading ? <span className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" /> : <ImagePlus className="w-4 h-4 text-primary" />}
+                    Upload Photos
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={handleUploadPhotos} disabled={uploading} />
+                  </label>
+                  <Button
+                    onClick={handleMarkComplete}
+                    disabled={workPhotos.length === 0}
+                    className="bg-success text-success-foreground hover:bg-success/90 disabled:opacity-50"
+                  >
+                    <CheckCircle className="w-4 h-4 mr-1" /> Mark Complete
+                  </Button>
+                </div>
+                {workPhotos.length === 0 && (
+                  <p className="text-xs text-warning">Please upload at least one work photo before marking as complete.</p>
+                )}
               </div>
             )}
           </motion.div>

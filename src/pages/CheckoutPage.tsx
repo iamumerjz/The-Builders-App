@@ -1,26 +1,20 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { CreditCard, Lock, ShieldCheck, ArrowLeft } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { CreditCard, ShieldCheck, ArrowLeft } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import StripePaymentForm from "@/components/StripePaymentForm";
 
 const CheckoutPage = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
-
-  const [form, setForm] = useState({
-    cardName: "",
-    cardNumber: "",
-    expiry: "",
-    cvv: "",
-  });
-  const [processing, setProcessing] = useState(false);
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Mock order summary
   const order = {
@@ -36,29 +30,25 @@ const CheckoutPage = () => {
   const serviceFee = Math.round(subtotal * 0.1);
   const total = subtotal + serviceFee;
 
-  const handleChange = (field: string, value: string) => {
-    if (field === "cardNumber") {
-      value = value.replace(/\D/g, "").replace(/(.{4})/g, "$1 ").trim().slice(0, 19);
+  const initPayment = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke("create-payment-intent", {
+        body: { amount: total, description: `${order.service} - ${order.proName}` },
+      });
+      if (fnError || !data?.clientSecret) throw new Error(data?.error || "Failed to initialize payment");
+      setClientSecret(data.clientSecret);
+    } catch (err: any) {
+      setError(err.message);
+      toast({ title: "Payment Error", description: err.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
     }
-    if (field === "expiry") {
-      value = value.replace(/\D/g, "").slice(0, 4);
-      if (value.length > 2) value = value.slice(0, 2) + "/" + value.slice(2);
-    }
-    if (field === "cvv") {
-      value = value.replace(/\D/g, "").slice(0, 4);
-    }
-    setForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setProcessing(true);
-    setTimeout(() => {
-      setProcessing(false);
-      toast({ title: "Payment successful!", description: "Your booking has been confirmed." });
-      navigate("/dashboard");
-    }, 2000);
-  };
+  // Initialize payment on mount
+  useState(() => { initPayment(); });
 
   return (
     <div className="min-h-screen bg-background">
@@ -76,52 +66,38 @@ const CheckoutPage = () => {
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
             {/* Payment Form */}
             <div className="lg:col-span-3">
-              <form onSubmit={handleSubmit} className="bg-card border border-border rounded-xl p-6 space-y-6">
+              <div className="bg-card border border-border rounded-xl p-6 space-y-6">
                 <div className="flex items-center gap-3 mb-2">
                   <CreditCard className="w-5 h-5 text-primary" />
                   <h2 className="font-heading font-bold text-lg text-foreground">Card Payment</h2>
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="cardName">Name on Card</Label>
-                  <Input id="cardName" placeholder="John Doe" value={form.cardName} onChange={(e) => handleChange("cardName", e.target.value)} required />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="cardNumber">Card Number</Label>
-                  <div className="relative">
-                    <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input id="cardNumber" className="pl-10" placeholder="1234 5678 9012 3456" value={form.cardNumber} onChange={(e) => handleChange("cardNumber", e.target.value)} required />
+                {loading && (
+                  <div className="flex items-center justify-center py-12">
+                    <span className="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                    <span className="ml-3 text-muted-foreground text-sm">Initializing payment…</span>
                   </div>
-                </div>
+                )}
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="expiry">Expiry Date</Label>
-                    <Input id="expiry" placeholder="MM/YY" value={form.expiry} onChange={(e) => handleChange("expiry", e.target.value)} required />
+                {error && !loading && (
+                  <div className="text-center py-8">
+                    <p className="text-destructive text-sm mb-3">{error}</p>
+                    <button onClick={initPayment} className="text-primary underline text-sm">Try again</button>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="cvv">CVV</Label>
-                    <Input id="cvv" placeholder="123" type="password" value={form.cvv} onChange={(e) => handleChange("cvv", e.target.value)} required />
-                  </div>
-                </div>
+                )}
 
-                <div className="flex items-center gap-2 text-xs text-muted-foreground bg-secondary rounded-lg p-3">
-                  <Lock className="w-4 h-4 text-primary flex-shrink-0" />
-                  <span>Your payment information is encrypted and secure. We never store your full card details.</span>
-                </div>
-
-                <Button type="submit" size="lg" className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-base" disabled={processing}>
-                  {processing ? (
-                    <span className="flex items-center gap-2">
-                      <span className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                      Processing…
-                    </span>
-                  ) : (
-                    `Pay PKR ${total}`
-                  )}
-                </Button>
-              </form>
+                {clientSecret && !loading && (
+                  <StripePaymentForm
+                    clientSecret={clientSecret}
+                    amount={total}
+                    onSuccess={() => {
+                      toast({ title: "Payment successful!", description: "Your booking has been confirmed." });
+                      navigate("/dashboard");
+                    }}
+                    onError={(msg) => toast({ title: "Payment failed", description: msg, variant: "destructive" })}
+                  />
+                )}
+              </div>
             </div>
 
             {/* Order Summary */}
@@ -143,20 +119,16 @@ const CheckoutPage = () => {
 
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between text-muted-foreground">
-                    <span>Date</span>
-                    <span className="text-foreground">{order.date}</span>
+                    <span>Date</span><span className="text-foreground">{order.date}</span>
                   </div>
                   <div className="flex justify-between text-muted-foreground">
-                    <span>Time</span>
-                    <span className="text-foreground">{order.time}</span>
+                    <span>Time</span><span className="text-foreground">{order.time}</span>
                   </div>
                   <div className="flex justify-between text-muted-foreground">
-                    <span>Duration</span>
-                    <span className="text-foreground">{order.hours} hours</span>
+                    <span>Duration</span><span className="text-foreground">{order.hours} hours</span>
                   </div>
                   <div className="flex justify-between text-muted-foreground">
-                    <span>Rate</span>
-                    <span className="text-foreground">PKR {order.rate}/hr</span>
+                    <span>Rate</span><span className="text-foreground">PKR {order.rate}/hr</span>
                   </div>
                 </div>
 
@@ -164,12 +136,10 @@ const CheckoutPage = () => {
 
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between text-muted-foreground">
-                    <span>Subtotal</span>
-                    <span className="text-foreground">PKR {subtotal}</span>
+                    <span>Subtotal</span><span className="text-foreground">PKR {subtotal}</span>
                   </div>
                   <div className="flex justify-between text-muted-foreground">
-                    <span>Service fee</span>
-                    <span className="text-foreground">PKR {serviceFee}</span>
+                    <span>Service fee</span><span className="text-foreground">PKR {serviceFee}</span>
                   </div>
                 </div>
 

@@ -28,6 +28,7 @@ export interface Review {
   date: string;
   text: string;
   jobType: string;
+  photos?: string[];
 }
 
 export interface Testimonial {

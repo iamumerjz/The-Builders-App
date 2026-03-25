@@ -309,6 +309,18 @@ const ProPanelPage = () => {
 
     if (action === "accept" || action === "reject") {
       await supabase.from("negotiations").update({ status: action === "accept" ? "accepted" : "rejected" } as any).eq("id", negId);
+
+      // Sync associated booking status — fetch negotiation from DB to get client_id
+      const { data: negRow } = await supabase.from("negotiations").select("client_id, service").eq("id", negId).maybeSingle();
+      if (negRow) {
+        const newBookingStatus = action === "accept" ? "accepted" : "rejected";
+        await supabase.from("bookings")
+          .update({ status: newBookingStatus } as any)
+          .eq("client_id", (negRow as any).client_id)
+          .eq("pro_id", user.id)
+          .eq("service", (negRow as any).service)
+          .eq("status", "upcoming");
+      }
     }
 
     loadProData();
@@ -364,7 +376,7 @@ const ProPanelPage = () => {
             {([
               { key: "jobs" as const, label: "Jobs", icon: Briefcase, count: bookings.filter((b: any) => ["upcoming", "confirmed", "accepted"].includes(b.status)).length },
               { key: "negotiations" as const, label: "Negotiations", icon: MessageSquare, count: negotiations.filter(n => n.status === "active").length },
-              { key: "profile" as const, label: "Profile", icon: Settings, count: 0 },
+              // { key: "profile" as const, label: "Profile", icon: Settings, count: 0 },
             ]).map((t) => (
               <button key={t.key} onClick={() => setMainTab(t.key)}
                 className={`flex items-center gap-1.5 px-4 py-2.5 font-heading font-bold text-sm uppercase tracking-wider border-b-2 transition-colors whitespace-nowrap ${mainTab === t.key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>

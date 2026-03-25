@@ -9,7 +9,7 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { SkeletonReview, SkeletonCalendar } from "@/components/Skeletons";
 import { timeSlots } from "@/lib/mockData";
-import { fetchProfessionalById, fetchReviewsForPro } from "@/lib/api";
+import { fetchProfessionalById, fetchReviewsForPro, fetchWorkPhotosForPro } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -30,6 +30,7 @@ const ProProfilePage = () => {
   const [offerSent, setOfferSent] = useState(false);
   const [reviewFilter, setReviewFilter] = useState("all");
   const [bookedSlots, setBookedSlots] = useState<string[]>([]);
+  const [workPhotos, setWorkPhotos] = useState<any[]>([]);
 
   useEffect(() => {
     if (!id) return;
@@ -37,8 +38,12 @@ const ProProfilePage = () => {
       const proData = await fetchProfessionalById(id);
       setPro(proData);
       if (proData) {
-        const revs = await fetchReviewsForPro(proData.user_id);
+        const [revs, wPhotos] = await Promise.all([
+          fetchReviewsForPro(proData.user_id),
+          fetchWorkPhotosForPro(proData.user_id),
+        ]);
         setReviews(revs);
+        setWorkPhotos(wPhotos);
         // fetch booked slots for today
         if (selectedDate) {
           const today = new Date();
@@ -179,13 +184,13 @@ const ProProfilePage = () => {
               if (authProfile?.city && pro.city && authProfile.city.trim().toLowerCase() !== pro.city.trim().toLowerCase()) { toast({ title: "Location mismatch", description: `This professional is based in ${pro.city}. You can only hire professionals in your city (${authProfile.city}).`, variant: "destructive" }); return; }
               navigate(`/book/${pro.id}`);
             }}>{pro.available ? "Book a Slot" : "Currently Unavailable"}</Button>
-            <Button variant="outline" disabled={!pro.available} className="border-primary text-primary hover:bg-primary hover:text-primary-foreground disabled:opacity-50" onClick={() => {
+            {/* <Button variant="outline" disabled={!pro.available} className="border-primary text-primary hover:bg-primary hover:text-primary-foreground disabled:opacity-50" onClick={() => {
               if (!user) { toast({ title: "Sign in required", description: "Please sign in first." }); navigate("/signin"); return; }
               if (authProfile?.is_labourer) { toast({ title: "Not allowed", description: "Professionals cannot hire other professionals.", variant: "destructive" }); return; }
               if (!isProfileComplete) { toast({ title: "Complete your profile", description: "Please fill in all profile details first." }); navigate("/profile"); return; }
               if (authProfile?.city && pro.city && authProfile.city.trim().toLowerCase() !== pro.city.trim().toLowerCase()) { toast({ title: "Location mismatch", description: `This professional is based in ${pro.city}. You can only hire professionals in your city (${authProfile.city}).`, variant: "destructive" }); return; }
               setShowBargain(!showBargain);
-            }}>Make an Offer</Button>
+            }}>Make an Offer</Button> */}
           </div>
         </div>
 
@@ -243,12 +248,32 @@ const ProProfilePage = () => {
                         </div>
                       </div>
                       <p className="text-sm text-muted-foreground">{r.text}</p>
+                      {r.photos && r.photos.length > 0 && (
+                        <div className="flex gap-2 mt-3 flex-wrap">
+                          {r.photos.map((photo: string, pi: number) => (
+                            <img key={pi} src={photo} alt={`Review photo ${pi + 1}`} className="w-20 h-20 object-cover rounded-lg border border-border" />
+                          ))}
+                        </div>
+                      )}
                       {r.jobType && <span className="text-xs text-primary uppercase tracking-wider mt-2 inline-block">{r.jobType}</span>}
                     </motion.div>
                   ))
                 )}
               </div>
             </section>
+
+            {workPhotos.length > 0 && (
+              <section>
+                <h2 className="font-heading font-bold text-xl text-foreground mb-4">Work Photos</h2>
+                <div className="columns-2 md:columns-3 gap-3 space-y-3">
+                  {workPhotos.map((wp: any, i: number) => (
+                    <motion.div key={wp.id} initial={{ opacity: 0 }} whileInView={{ opacity: 1 }} viewport={{ once: true }} className="relative group rounded-lg overflow-hidden break-inside-avoid">
+                      <img src={wp.photo_url} alt={`Work ${i + 1}`} className="w-full rounded-lg" />
+                    </motion.div>
+                  ))}
+                </div>
+              </section>
+            )}
 
             {pro.portfolio.length > 0 && (
               <section>

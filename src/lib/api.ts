@@ -54,54 +54,95 @@ export const fetchProfessionalById = async (id: string): Promise<Professional | 
 
   if (error || !p) return null;
 
-  const { data: reviews } = await supabase
-    .from("reviews")
-    .select("pro_id, rating")
-    .eq("pro_id", (p as any).user_id);
+  const pro = p as any;
 
-  const count = (reviews || []).length;
-  const total = (reviews || []).reduce((sum: number, r: any) => sum + r.rating, 0);
+  // Fetch reviews, completed bookings count, and repeat clients in parallel
+  const [reviewsRes, jobsRes, clientsRes] = await Promise.all([
+    supabase.from("reviews").select("pro_id, rating").eq("pro_id", pro.user_id),
+    supabase.from("bookings").select("id").eq("pro_id", pro.user_id).eq("status", "completed"),
+    supabase.from("bookings").select("client_id").eq("pro_id", pro.user_id).eq("status", "completed"),
+  ]);
+
+  const reviews = reviewsRes.data || [];
+  const count = reviews.length;
+  const total = reviews.reduce((sum: number, r: any) => sum + r.rating, 0);
+  const jobsDone = (jobsRes.data || []).length;
+
+  // Count repeat clients (clients with more than 1 completed booking)
+  const clientCounts: Record<string, number> = {};
+  (clientsRes.data || []).forEach((b: any) => {
+    clientCounts[b.client_id] = (clientCounts[b.client_id] || 0) + 1;
+  });
+  const repeatClients = Object.values(clientCounts).filter((c) => c > 1).length;
 
   return {
-    id: (p as any).id,
-    user_id: (p as any).user_id,
-    name: (p as any).full_name || "Pro",
-    profession: (p as any).profession || "General",
-    avatar: (p as any).avatar_url || `https://api.dicebear.com/7.x/initials/svg?seed=${(p as any).full_name || "P"}`,
+    id: pro.id,
+    user_id: pro.user_id,
+    name: pro.full_name || "Pro",
+    profession: pro.profession || "General",
+    avatar: pro.avatar_url || `https://api.dicebear.com/7.x/initials/svg?seed=${pro.full_name || "P"}`,
     rating: count > 0 ? Math.round((total / count) * 10) / 10 : 0,
     reviewCount: count,
-    hourlyRate: (p as any).hourly_rate || 0,
-    city: (p as any).city || "",
-    available: (p as any).available ?? true,
-    availability: (p as any).availability_schedule || [],
-    yearsExperience: (p as any).years_experience || 0,
-    jobsCompleted: (p as any).jobs_completed || 0,
-    responseTime: (p as any).response_time || "< 1 hour",
-    repeatClients: (p as any).repeat_clients || 0,
-    bio: (p as any).bio || "",
-    skills: (p as any).skills || [],
-    portfolio: (p as any).portfolio || [],
-    topRated: (p as any).top_rated || false,
+    hourlyRate: pro.hourly_rate || 0,
+    city: pro.city || "",
+    available: pro.available ?? true,
+    availability: pro.availability_schedule || [],
+    yearsExperience: pro.years_experience || 0,
+    jobsCompleted: jobsDone,
+    responseTime: pro.response_time || "< 1 hour",
+    repeatClients,
+    bio: pro.bio || "",
+    skills: pro.skills || [],
+    portfolio: pro.portfolio || [],
+    topRated: pro.top_rated || false,
   };
 };
 
 // Fetch reviews for a pro
 export const fetchReviewsForPro = async (proUserId: string) => {
-  const { data, error } = await supabase
+  const { data: reviews, error } = await supabase
     .from("reviews")
-    .select("*, profiles!reviews_client_id_fkey(full_name)")
+    .select("*, review_photos(*)")
     .eq("pro_id", proUserId)
     .order("created_at", { ascending: false });
 
-  if (error || !data) return [];
+  if (error || !reviews) return [];
 
-  return data.map((r: any) => ({
-    id: r.id,
-    author: r.profiles?.full_name || "Anonymous",
-    avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${r.profiles?.full_name || "A"}`,
-    rating: r.rating,
-    date: new Date(r.created_at).toLocaleDateString(),
-    text: r.text || "",
-    jobType: r.job_type || "",
-  }));
+  const clientIds = [...new Set(reviews.map((review: any) => review.client_id).filter(Boolean))];
+  const { data: clientProfiles } = clientIds.length
+    ? await supabase
+        .from("profiles")
+        .select("user_id, full_name")
+        .in("user_id", clientIds)
+    : { data: [] };
+
+  const clientNameMap = new Map(
+    (clientProfiles || []).map((profile: any) => [profile.user_id, profile.full_name || "Anonymous"]),
+  );
+
+  return reviews.map((review: any) => {
+    const author = clientNameMap.get(review.client_id) || "Anonymous";
+
+    return {
+      id: review.id,
+      author,
+      avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${author || "A"}`,
+      rating: review.rating,
+      date: new Date(review.created_at).toLocaleDateString(),
+      text: review.text || "",
+      jobType: review.job_type || "",
+      photos: (review.review_photos || []).map((photo: any) => photo.photo_url),
+    };
+  });
+};
+
+// Fetch work photos uploaded by a pro
+export const fetchWorkPhotosForPro = async (proUserId: string) => {
+  const { data: photos } = await supabase
+    .from("work_photos")
+    .select("*")
+    .eq("uploaded_by", proUserId)
+    .order("created_at", { ascending: false });
+
+  return photos || [];
 };

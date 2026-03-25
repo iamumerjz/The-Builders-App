@@ -173,17 +173,24 @@ const NegotiationThread = ({ negotiation, viewAs, onAction }: NegotiationThreadP
                 className="overflow-visible"
               >
                 <div className="flex gap-2 mt-1 py-1">
-                  <Input
-                    placeholder="Your counter (PKR/hr)"
-                    value={counterAmount}
-                    onChange={(e) => setCounterAmount(e.target.value.replace(/\D/g, ""))}
-                    className="bg-muted border-border text-foreground focus-visible:ring-primary/30 focus-visible:ring-offset-0"
-                  />
+                  <div className="flex-1 space-y-1">
+                    <Input
+                      placeholder="Your counter (PKR/hr)"
+                      value={counterAmount}
+                      onChange={(e) => setCounterAmount(e.target.value.replace(/\D/g, ""))}
+                      className="bg-muted border-border text-foreground focus-visible:ring-primary/30 focus-visible:ring-offset-0"
+                    />
+                    {counterAmount && parseInt(counterAmount) < 500 && (
+                      <p className="text-[10px] text-destructive">Minimum PKR 500/hr</p>
+                    )}
+                  </div>
                   <Button
                     size="icon"
-                    disabled={!counterAmount}
+                    disabled={!counterAmount || parseInt(counterAmount) < 500}
                     onClick={() => {
-                      onAction(negotiation.id, "counter", parseInt(counterAmount));
+                      const val = parseInt(counterAmount);
+                      if (val < 500) return;
+                      onAction(negotiation.id, "counter", val);
                       setCounterAmount("");
                       setShowCounter(false);
                     }}
